@@ -1,14 +1,15 @@
-module Main exposing (Model, Msg(..), Todo, init, main, subscriptions, todosDecoder, todosEncoder, update, view, viewForm, viewHeader, viewList)
+module Main exposing (Model, Msg(..), Todo, init, isOldTodo, main, subscriptions, todosDecode, todosEncode, update, view, viewForm, viewHeader, viewList)
 
 import Browser
 import Css exposing (..)
 import Css.Animations exposing (custom, keyframes, property)
 import Css.Transitions exposing (transition)
 import Html.Styled as Styled
-import Html.Styled.Attributes exposing (css, placeholder, value)
-import Html.Styled.Events exposing (onInput, onSubmit)
+import Html.Styled.Attributes exposing (css, placeholder, src, value)
+import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as D
 import Json.Encode as E
+import List exposing (filter)
 import Ports
 import String exposing (String)
 import Task
@@ -48,17 +49,13 @@ type alias Model =
 
 init : D.Value -> ( Model, Cmd Msg )
 init flags =
-    ( { zone = Time.utc
-      , time = Time.millisToPosix 0
-      , todos = todosDecoder flags
-      , userInput = "test"
-      }
+    ( Model Time.utc (Time.millisToPosix 0) (todosDecode flags) "test"
     , Task.perform AdjustTimeZone Time.here
     )
 
 
-todosDecoder : D.Value -> List Todo
-todosDecoder flags =
+todosDecode : D.Value -> List Todo
+todosDecode flags =
     let
         decoder =
             D.list <|
@@ -87,6 +84,7 @@ type Msg
     = Tick Time.Posix
     | AdjustTimeZone Time.Zone
     | Add String
+    | Delete Time.Posix
     | Input String
 
 
@@ -106,10 +104,19 @@ update msg model =
         Add input ->
             let
                 newModel =
-                    { model | todos = Todo input model.time :: model.todos }
+                    { model | todos = Todo input model.time :: model.todos, userInput = "" }
             in
             ( newModel
-            , Ports.save (todosEncoder newModel.todos)
+            , Ports.save (todosEncode newModel.todos)
+            )
+
+        Delete date ->
+            let
+                newModel =
+                    { model | todos = filter (isOldTodo date) model.todos }
+            in
+            ( newModel
+            , Ports.save (todosEncode newModel.todos)
             )
 
         Input input ->
@@ -118,8 +125,13 @@ update msg model =
             )
 
 
-todosEncoder : List Todo -> E.Value
-todosEncoder todos =
+isOldTodo : Time.Posix -> Todo -> Bool
+isOldTodo time todo =
+    todo.date /= time
+
+
+todosEncode : List Todo -> E.Value
+todosEncode todos =
     E.list
         E.object
         (todos
@@ -159,11 +171,18 @@ view model =
 
         second =
             zeroPadding <| "0" ++ String.fromInt (Time.toSecond model.zone model.time)
+
+        timeView =
+            if model.time == Time.millisToPosix 0 then
+                "--:--:--"
+
+            else
+                hour ++ ":" ++ minute ++ ":" ++ second
     in
     Styled.div
         [ css
-            [ backgroundColor (hex "#f5f5f5")
-            , backgroundImage (linearGradient2 toTopLeft (stop <| hex "#f5f5f5") (stop <| hex "#35495E") [])
+            [ backgroundColor (hex "#7F7FD5")
+            , backgroundImage (linearGradient2 toTopLeft (stop <| hex "#4776E6") (stop <| hex "#8E54E9") [])
             , overflow hidden
             ]
         ]
@@ -173,14 +192,10 @@ view model =
                 , minHeight (vh 100)
                 , margin2 (px 0) auto
                 , paddingTop (px 50)
-                , paddingBottom (px 50)
-                , width (vw 70)
-                , displayFlex
-                , flexDirection column
-                , alignItems center
+                , width (px 1080)
                 ]
             ]
-            ([ viewHeader (hour ++ ":" ++ minute ++ ":" ++ second)
+            ([ viewHeader timeView
              , viewForm model.userInput
              ]
                 ++ viewList model.todos
@@ -198,7 +213,7 @@ viewHeader time =
                 , fontSize (px 30)
                 ]
             ]
-            [ Styled.text "elm-todos" ]
+            [ Styled.text "ElmTodo" ]
         , Styled.p
             [ css
                 [ color (hex "fff")
@@ -253,7 +268,13 @@ viewList todos =
                     ]
                 ]
                 [ Styled.ul
-                    []
+                    [ css
+                        [ displayFlex
+                        , flexWrap wrap
+                        , marginTop (px -20)
+                        , marginLeft (px -20)
+                        ]
+                    ]
                   <|
                     (todos
                         |> List.map
@@ -261,21 +282,24 @@ viewList todos =
                                 Styled.li
                                     [ css
                                         [ boxSizing borderBox
+                                        , displayFlex
+                                        , alignItems center
+                                        , justifyContent spaceBetween
                                         , backgroundColor (hex "fff")
                                         , borderRadius (px 3)
                                         , boxShadow4 (px 0) (px 4) (px 24) (rgba 0 0 0 0.15)
                                         , color (hex "aaa")
-                                        , fontSize (px 20)
-                                        , padding (px 20)
-                                        , width (px 500)
+                                        , fontSize (px 25)
+                                        , padding3 (px 40) (px 20) (px 20)
+                                        , height (px 200)
+                                        , width (px 200)
                                         , marginTop (px 20)
+                                        , marginLeft (px 20)
+                                        , position relative
                                         , transform (translateY (px 0))
                                         , transition
                                             [ Css.Transitions.boxShadow 500
                                             , Css.Transitions.transform 500
-                                            ]
-                                        , firstChild
-                                            [ marginTop (px 0)
                                             ]
                                         , hover
                                             [ boxShadow4 (px 0) (px 4) (px 48) (rgba 0 0 0 0.3)
@@ -283,7 +307,24 @@ viewList todos =
                                             ]
                                         ]
                                     ]
-                                    [ Styled.text todo.title ]
+                                    [ Styled.text todo.title
+                                    , Styled.button
+                                        [ onClick (Delete todo.date)
+                                        , css
+                                            [ position absolute
+                                            , top (px 20)
+                                            , right (px 20)
+                                            ]
+                                        ]
+                                        [ Styled.img
+                                            [ src "image/icon.png"
+                                            , css
+                                                [ width (px 20)
+                                                ]
+                                            ]
+                                            []
+                                        ]
+                                    ]
                             )
                     )
                 ]
